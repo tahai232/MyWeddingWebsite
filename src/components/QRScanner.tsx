@@ -26,7 +26,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
   useEffect(() => {
     // Check camera availability on component mount
     checkCameraAvailability();
-    
+    a
     return () => {
       if (qrScannerRef.current) {
         qrScannerRef.current.destroy();
