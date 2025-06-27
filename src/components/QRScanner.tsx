@@ -23,15 +23,14 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
   const [showConfetti, setShowConfetti] = useState(false);
   const [cameraError, setCameraError] = useState<string>('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   useEffect(() => {
     // Check camera availability on component mount
     checkCameraAvailability();
     
     return () => {
-      if (qrScannerRef.current) {
-        qrScannerRef.current.destroy();
-      }
+      cleanupScanner();
     };
   }, []);
 
@@ -47,98 +46,105 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     return () => document.removeEventListener('keydown', handleEscape);
   }, [showCameraModal]);
 
+  const cleanupScanner = () => {
+    if (qrScannerRef.current) {
+      try {
+        qrScannerRef.current.stop();
+        qrScannerRef.current.destroy();
+      } catch (error) {
+        console.log('Scanner cleanup error:', error);
+      }
+      qrScannerRef.current = null;
+    }
+  };
+
   const checkCameraAvailability = async () => {
     try {
       // Check if camera is available
       const hasCamera = await QrScanner.hasCamera();
       if (!hasCamera) {
         setCameraError('No camera found on this device');
+        setHasPermission(false);
         return;
       }
 
-      // Request camera permission
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment' // Prefer back camera
-        } 
-      });
-      
-      // Stop the stream immediately as we just wanted to check permission
-      stream.getTracks().forEach(track => track.stop());
       setHasPermission(true);
       setCameraError('');
     } catch (error) {
-      console.error('Camera permission error:', error);
+      console.error('Camera availability check error:', error);
       setHasPermission(false);
-      
-      if (error instanceof Error) {
-        if (error.name === 'NotAllowedError') {
-          setCameraError('Camera permission denied. Please allow camera access and refresh the page.');
-        } else if (error.name === 'NotFoundError') {
-          setCameraError('No camera found on this device.');
-        } else if (error.name === 'NotSupportedError') {
-          setCameraError('Camera not supported on this device.');
-        } else {
-          setCameraError('Unable to access camera. Please check your browser settings.');
-        }
-      }
+      setCameraError('Unable to access camera. Please check your browser settings.');
     }
   };
 
   const startScanning = async () => {
-    if (!videoRef.current) return;
+    if (hasPermission === false) {
+      setCameraError('Camera permission is required to scan QR codes');
+      return;
+    }
 
-    try {
-      setCameraError('');
-      setShowCameraModal(true);
-      
-      // Small delay to ensure modal is rendered
-      setTimeout(async () => {
-        if (!videoRef.current) return;
+    setIsInitializing(true);
+    setShowCameraModal(true);
+    setCameraError('');
+    setScanResult(null);
 
+    // Wait for modal to render
+    setTimeout(async () => {
+      try {
+        if (!videoRef.current) {
+          throw new Error('Video element not found');
+        }
+
+        // Clean up any existing scanner
+        cleanupScanner();
+
+        // Create new scanner
         qrScannerRef.current = new QrScanner(
           videoRef.current,
           (result) => handleScanResult(result.data),
           {
             highlightScanRegion: true,
             highlightCodeOutline: true,
-            preferredCamera: 'environment', // Use back camera if available
-            maxScansPerSecond: 5,
+            preferredCamera: 'environment',
+            maxScansPerSecond: 3,
+            returnDetailedScanResult: false,
           }
         );
 
+        // Start the scanner
         await qrScannerRef.current.start();
         setIsScanning(true);
-        setHasPermission(true);
-      }, 100);
-    } catch (error) {
-      console.error('Error starting QR scanner:', error);
-      setIsScanning(false);
-      setShowCameraModal(false);
-      
-      if (error instanceof Error) {
-        if (error.name === 'NotAllowedError') {
-          setCameraError('Camera permission denied. Please allow camera access in your browser settings.');
-          setHasPermission(false);
-        } else if (error.name === 'NotFoundError') {
-          setCameraError('Camera not found. Please ensure your device has a camera.');
-        } else if (error.name === 'NotReadableError') {
-          setCameraError('Camera is being used by another application. Please close other camera apps.');
+        setIsInitializing(false);
+        console.log('QR Scanner started successfully');
+
+      } catch (error) {
+        console.error('Error starting QR scanner:', error);
+        setIsScanning(false);
+        setIsInitializing(false);
+        
+        if (error instanceof Error) {
+          if (error.name === 'NotAllowedError') {
+            setCameraError('Camera permission denied. Please allow camera access and try again.');
+            setHasPermission(false);
+          } else if (error.name === 'NotFoundError') {
+            setCameraError('Camera not found. Please ensure your device has a camera.');
+          } else if (error.name === 'NotReadableError') {
+            setCameraError('Camera is being used by another application.');
+          } else {
+            setCameraError(`Failed to start camera: ${error.message}`);
+          }
         } else {
-          setCameraError('Failed to start camera. Please refresh the page and try again.');
+          setCameraError('Failed to start camera. Please try again.');
         }
       }
-    }
+    }, 200);
   };
 
   const handleCloseCamera = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop();
-      qrScannerRef.current.destroy();
-      qrScannerRef.current = null;
-    }
+    cleanupScanner();
     setIsScanning(false);
     setShowCameraModal(false);
+    setIsInitializing(false);
     setScanResult(null);
     setLastResult('');
   };
@@ -147,6 +153,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     if (data === lastResult) return; // Prevent duplicate scans
     
     setLastResult(data);
+    console.log('QR Code scanned:', data);
     
     // Parse wedding guest QR code format: WEDDING_GUEST:guestId:guestName:timestamp
     if (!data.startsWith('WEDDING_GUEST:')) {
@@ -165,7 +172,24 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
       return;
     }
 
-    const [, guestId, guestName] = data.split(':');
+    const parts = data.split(':');
+    if (parts.length < 3) {
+      const attempt: CheckInAttempt = {
+        id: `attempt_${Date.now()}`,
+        qrContent: data,
+        timestamp: Date.now(),
+        status: 'invalid'
+      };
+      
+      onAddCheckInAttempt(attempt);
+      setScanResult({
+        type: 'invalid',
+        message: 'Invalid QR code format'
+      });
+      return;
+    }
+
+    const [, guestId, guestName] = parts;
     const guest = guests.find(g => g.id === guestId);
 
     if (!guest) {
@@ -224,14 +248,25 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     setShowConfetti(true);
     setTimeout(() => setShowConfetti(false), 3000);
 
-    // Auto-close camera after successful scan (optional)
+    // Auto-close camera after successful scan
     setTimeout(() => {
       handleCloseCamera();
-    }, 2000);
+    }, 2500);
   };
 
   const requestCameraPermission = async () => {
-    await checkCameraAvailability();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' } 
+      });
+      stream.getTracks().forEach(track => track.stop());
+      setHasPermission(true);
+      setCameraError('');
+    } catch (error) {
+      console.error('Permission request error:', error);
+      setHasPermission(false);
+      setCameraError('Camera permission denied. Please allow camera access in your browser settings.');
+    }
   };
 
   return (
@@ -248,17 +283,26 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
           
           <button
             onClick={startScanning}
-            disabled={hasPermission === false || isScanning}
+            disabled={hasPermission === false || isScanning || isInitializing}
             className={`px-6 py-3 rounded-xl text-white font-medium transition-all duration-200 flex items-center space-x-2 ${
               hasPermission === false
                 ? 'bg-gray-400 cursor-not-allowed'
-                : isScanning
+                : isScanning || isInitializing
                 ? 'bg-gray-500 cursor-not-allowed'
                 : 'bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
             }`}
           >
-            <Maximize className="w-5 h-5" />
-            <span>{isScanning ? 'Scanner Active' : 'Open Camera Scanner'}</span>
+            {isInitializing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Starting Camera...</span>
+              </>
+            ) : (
+              <>
+                <Maximize className="w-5 h-5" />
+                <span>{isScanning ? 'Scanner Active' : 'Open Camera Scanner'}</span>
+              </>
+            )}
           </button>
         </div>
 
@@ -267,7 +311,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-center space-x-2">
               <AlertTriangle className="w-5 h-5 text-red-600" />
-              <div>
+              <div className="flex-1">
                 <p className="text-red-800 font-medium">Camera Access Issue</p>
                 <p className="text-red-700 text-sm mt-1">{cameraError}</p>
                 {hasPermission === false && (
@@ -275,7 +319,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
                     onClick={requestCameraPermission}
                     className="mt-2 px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
                   >
-                    Try Again
+                    Request Permission
                   </button>
                 )}
               </div>
@@ -312,8 +356,8 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
 
       {/* Camera Modal Popup */}
       {showCameraModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[95vh] overflow-hidden shadow-2xl">
             {/* Modal Header */}
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-3">
@@ -321,6 +365,12 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
                   <Camera className="w-5 h-5 text-white" />
                 </div>
                 <h3 className="text-xl font-playfair font-semibold text-gray-800">QR Code Scanner</h3>
+                {isScanning && (
+                  <div className="flex items-center space-x-2 text-green-600">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-sm font-medium">Active</span>
+                  </div>
+                )}
               </div>
               <button
                 onClick={handleCloseCamera}
@@ -332,24 +382,55 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
 
             {/* Camera Feed */}
             <div className="relative mb-4">
-              <video
-                ref={videoRef}
-                className="w-full max-h-96 rounded-xl border-4 border-pink-200 bg-gray-100"
-                playsInline
-                muted
-                autoPlay
-              />
-              
-              {/* Scanning Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-48 h-48 border-4 border-green-400 rounded-lg animate-pulse">
-                  <div className="absolute -top-1 -left-1 w-8 h-8 border-t-4 border-l-4 border-green-500 rounded-tl-lg"></div>
-                  <div className="absolute -top-1 -right-1 w-8 h-8 border-t-4 border-r-4 border-green-500 rounded-tr-lg"></div>
-                  <div className="absolute -bottom-1 -left-1 w-8 h-8 border-b-4 border-l-4 border-green-500 rounded-bl-lg"></div>
-                  <div className="absolute -bottom-1 -right-1 w-8 h-8 border-b-4 border-r-4 border-green-500 rounded-br-lg"></div>
+              {isInitializing ? (
+                <div className="w-full h-96 bg-gray-100 rounded-xl border-4 border-pink-200 flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                    <p className="text-gray-600 font-medium">Starting camera...</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    className="w-full h-96 object-cover rounded-xl border-4 border-pink-200 bg-gray-100"
+                    playsInline
+                    muted
+                    autoPlay
+                  />
+                  
+                  {/* Scanning Overlay */}
+                  {isScanning && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="relative">
+                        <div className="w-48 h-48 border-4 border-green-400 rounded-lg animate-pulse">
+                          {/* Corner brackets */}
+                          <div className="absolute -top-1 -left-1 w-8 h-8 border-t-4 border-l-4 border-green-500 rounded-tl-lg"></div>
+                          <div className="absolute -top-1 -right-1 w-8 h-8 border-t-4 border-r-4 border-green-500 rounded-tr-lg"></div>
+                          <div className="absolute -bottom-1 -left-1 w-8 h-8 border-b-4 border-l-4 border-green-500 rounded-bl-lg"></div>
+                          <div className="absolute -bottom-1 -right-1 w-8 h-8 border-b-4 border-r-4 border-green-500 rounded-br-lg"></div>
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <p className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                            Scanning...
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Error in Modal */}
+            {cameraError && showCameraModal && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-600" />
+                  <p className="text-red-800 text-sm">{cameraError}</p>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Scan Result in Modal */}
             {scanResult && (
@@ -389,7 +470,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
             )}
 
             {/* Modal Instructions */}
-            <div className="bg-blue-50 rounded-xl p-3 border border-blue-200">
+            <div className="bg-blue-50 rounded-xl p-3 border border-blue-200 mb-4">
               <p className="text-sm text-blue-700 text-center">
                 <strong>Point your camera at a wedding invitation QR code</strong>
                 <br />
@@ -398,7 +479,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
             </div>
 
             {/* Close Button */}
-            <div className="mt-4 flex justify-center">
+            <div className="flex justify-center">
               <button
                 onClick={handleCloseCamera}
                 className="px-6 py-2 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-lg hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center space-x-2"
