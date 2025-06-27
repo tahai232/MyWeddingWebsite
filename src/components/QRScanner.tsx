@@ -46,6 +46,13 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     return () => document.removeEventListener('keydown', handleEscape);
   }, [showCameraModal]);
 
+  // Initialize scanner when modal is shown and video element is available
+  useEffect(() => {
+    if (showCameraModal && isInitializing && videoRef.current) {
+      initializeScanner();
+    }
+  }, [showCameraModal, isInitializing, videoRef.current]);
+
   const cleanupScanner = () => {
     if (qrScannerRef.current) {
       try {
@@ -77,6 +84,56 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     }
   };
 
+  const initializeScanner = async () => {
+    try {
+      if (!videoRef.current) {
+        throw new Error('Video element not found');
+      }
+
+      // Clean up any existing scanner
+      cleanupScanner();
+
+      // Create new scanner
+      qrScannerRef.current = new QrScanner(
+        videoRef.current,
+        (result) => handleScanResult(result.data),
+        {
+          highlightScanRegion: true,
+          highlightCodeOutline: true,
+          preferredCamera: 'environment',
+          maxScansPerSecond: 3,
+          returnDetailedScanResult: false,
+        }
+      );
+
+      // Start the scanner
+      await qrScannerRef.current.start();
+      setIsScanning(true);
+      setIsInitializing(false);
+      console.log('QR Scanner started successfully');
+
+    } catch (error) {
+      console.error('Error starting QR scanner:', error);
+      setIsScanning(false);
+      setIsInitializing(false);
+      
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError') {
+          setCameraError('Camera permission denied. Please allow camera access and try again.');
+          setHasPermission(false);
+        } else if (error.name === 'NotFoundError') {
+          setCameraError('Camera not found. Please ensure your device has a camera.');
+        } else if (error.name === 'NotReadableError') {
+          setCameraError('Camera is being used by another application.');
+        } else {
+          setCameraError(`Failed to start camera: ${error.message}`);
+        }
+      } else {
+        setCameraError('Failed to start camera. Please try again.');
+      }
+    }
+  };
+
   const startScanning = async () => {
     if (hasPermission === false) {
       setCameraError('Camera permission is required to scan QR codes');
@@ -87,57 +144,6 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     setShowCameraModal(true);
     setCameraError('');
     setScanResult(null);
-
-    // Wait for modal to render
-    setTimeout(async () => {
-      try {
-        if (!videoRef.current) {
-          throw new Error('Video element not found');
-        }
-
-        // Clean up any existing scanner
-        cleanupScanner();
-
-        // Create new scanner
-        qrScannerRef.current = new QrScanner(
-          videoRef.current,
-          (result) => handleScanResult(result.data),
-          {
-            highlightScanRegion: true,
-            highlightCodeOutline: true,
-            preferredCamera: 'environment',
-            maxScansPerSecond: 3,
-            returnDetailedScanResult: false,
-          }
-        );
-
-        // Start the scanner
-        await qrScannerRef.current.start();
-        setIsScanning(true);
-        setIsInitializing(false);
-        console.log('QR Scanner started successfully');
-
-      } catch (error) {
-        console.error('Error starting QR scanner:', error);
-        setIsScanning(false);
-        setIsInitializing(false);
-        
-        if (error instanceof Error) {
-          if (error.name === 'NotAllowedError') {
-            setCameraError('Camera permission denied. Please allow camera access and try again.');
-            setHasPermission(false);
-          } else if (error.name === 'NotFoundError') {
-            setCameraError('Camera not found. Please ensure your device has a camera.');
-          } else if (error.name === 'NotReadableError') {
-            setCameraError('Camera is being used by another application.');
-          } else {
-            setCameraError(`Failed to start camera: ${error.message}`);
-          }
-        } else {
-          setCameraError('Failed to start camera. Please try again.');
-        }
-      }
-    }, 200);
   };
 
   const handleCloseCamera = () => {
