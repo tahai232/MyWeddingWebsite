@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, CameraOff, CheckCircle, XCircle, AlertTriangle, PartyPopper, Shield } from 'lucide-react';
+import { Camera, CameraOff, CheckCircle, XCircle, AlertTriangle, PartyPopper, Shield, X, Maximize } from 'lucide-react';
 import QrScanner from 'qr-scanner';
 import { WeddingGuest, CheckInAttempt } from '../types';
 
@@ -13,6 +13,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
   const videoRef = useRef<HTMLVideoElement>(null);
   const qrScannerRef = useRef<QrScanner | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [showCameraModal, setShowCameraModal] = useState(false);
   const [lastResult, setLastResult] = useState<string>('');
   const [scanResult, setScanResult] = useState<{
     type: 'success' | 'duplicate' | 'invalid';
@@ -33,6 +34,18 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
       }
     };
   }, []);
+
+  // Close modal when pressing Escape key
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && showCameraModal) {
+        handleCloseCamera();
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [showCameraModal]);
 
   const checkCameraAvailability = async () => {
     try {
@@ -77,24 +90,31 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
 
     try {
       setCameraError('');
+      setShowCameraModal(true);
       
-      qrScannerRef.current = new QrScanner(
-        videoRef.current,
-        (result) => handleScanResult(result.data),
-        {
-          highlightScanRegion: true,
-          highlightCodeOutline: true,
-          preferredCamera: 'environment', // Use back camera if available
-          maxScansPerSecond: 5,
-        }
-      );
+      // Small delay to ensure modal is rendered
+      setTimeout(async () => {
+        if (!videoRef.current) return;
 
-      await qrScannerRef.current.start();
-      setIsScanning(true);
-      setHasPermission(true);
+        qrScannerRef.current = new QrScanner(
+          videoRef.current,
+          (result) => handleScanResult(result.data),
+          {
+            highlightScanRegion: true,
+            highlightCodeOutline: true,
+            preferredCamera: 'environment', // Use back camera if available
+            maxScansPerSecond: 5,
+          }
+        );
+
+        await qrScannerRef.current.start();
+        setIsScanning(true);
+        setHasPermission(true);
+      }, 100);
     } catch (error) {
       console.error('Error starting QR scanner:', error);
       setIsScanning(false);
+      setShowCameraModal(false);
       
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
@@ -111,13 +131,16 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     }
   };
 
-  const stopScanning = () => {
+  const handleCloseCamera = () => {
     if (qrScannerRef.current) {
       qrScannerRef.current.stop();
       qrScannerRef.current.destroy();
       qrScannerRef.current = null;
     }
     setIsScanning(false);
+    setShowCameraModal(false);
+    setScanResult(null);
+    setLastResult('');
   };
 
   const handleScanResult = (data: string) => {
@@ -201,11 +224,10 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
     setShowConfetti(true);
     setTimeout(() => setShowConfetti(false), 3000);
 
-    // Clear result after 3 seconds
+    // Auto-close camera after successful scan (optional)
     setTimeout(() => {
-      setScanResult(null);
-      setLastResult('');
-    }, 3000);
+      handleCloseCamera();
+    }, 2000);
   };
 
   const requestCameraPermission = async () => {
@@ -225,27 +247,18 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
           </div>
           
           <button
-            onClick={isScanning ? stopScanning : startScanning}
-            disabled={hasPermission === false}
-            className={`px-4 py-2 rounded-lg text-white font-medium transition-all duration-200 flex items-center space-x-2 ${
+            onClick={startScanning}
+            disabled={hasPermission === false || isScanning}
+            className={`px-6 py-3 rounded-xl text-white font-medium transition-all duration-200 flex items-center space-x-2 ${
               hasPermission === false
                 ? 'bg-gray-400 cursor-not-allowed'
                 : isScanning
-                ? 'bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700'
-                : 'bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700'
+                ? 'bg-gray-500 cursor-not-allowed'
+                : 'bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
             }`}
           >
-            {isScanning ? (
-              <>
-                <CameraOff className="w-4 h-4" />
-                <span>Stop Scanner</span>
-              </>
-            ) : (
-              <>
-                <Camera className="w-4 h-4" />
-                <span>Start Scanner</span>
-              </>
-            )}
+            <Maximize className="w-5 h-5" />
+            <span>{isScanning ? 'Scanner Active' : 'Open Camera Scanner'}</span>
           </button>
         </div>
 
@@ -270,75 +283,129 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
           </div>
         )}
 
-        {/* Video Scanner */}
+        {/* Preview Area */}
         <div className="relative">
-          <video
-            ref={videoRef}
-            className="w-full max-w-md mx-auto rounded-xl border-4 border-pink-200 bg-gray-100"
-            style={{ display: isScanning ? 'block' : 'none' }}
-            playsInline
-            muted
-          />
-          
-          {!isScanning && (
-            <div className="w-full max-w-md mx-auto h-64 bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl border-4 border-gray-300 flex items-center justify-center">
-              <div className="text-center">
-                {hasPermission === null ? (
-                  <>
-                    <div className="w-8 h-8 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-                    <p className="text-gray-600 font-medium">Checking camera...</p>
-                  </>
-                ) : hasPermission === false ? (
-                  <>
-                    <Shield className="w-12 h-12 text-red-400 mx-auto mb-3" />
-                    <p className="text-red-600 font-medium">Camera Permission Required</p>
-                    <p className="text-sm text-red-500 mt-1">Please allow camera access to scan QR codes</p>
-                  </>
-                ) : (
-                  <>
-                    <Camera className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-600 font-medium">Click "Start Scanner" to begin</p>
-                    <p className="text-sm text-gray-500 mt-1">Point camera at wedding invitation QR codes</p>
-                  </>
-                )}
-              </div>
+          <div className="w-full max-w-md mx-auto h-64 bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl border-4 border-gray-300 flex items-center justify-center">
+            <div className="text-center">
+              {hasPermission === null ? (
+                <>
+                  <div className="w-8 h-8 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                  <p className="text-gray-600 font-medium">Checking camera...</p>
+                </>
+              ) : hasPermission === false ? (
+                <>
+                  <Shield className="w-12 h-12 text-red-400 mx-auto mb-3" />
+                  <p className="text-red-600 font-medium">Camera Permission Required</p>
+                  <p className="text-sm text-red-500 mt-1">Please allow camera access to scan QR codes</p>
+                </>
+              ) : (
+                <>
+                  <Camera className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                  <p className="text-gray-600 font-medium">Click "Open Camera Scanner" to begin</p>
+                  <p className="text-sm text-gray-500 mt-1">Camera will open in a popup window</p>
+                </>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
-      {/* Scan Result */}
-      {scanResult && (
-        <div className={`relative bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border-2 transition-all duration-300 ${
-          scanResult.type === 'success' ? 'border-green-300 bg-green-50/80' :
-          scanResult.type === 'duplicate' ? 'border-yellow-300 bg-yellow-50/80' :
-          'border-red-300 bg-red-50/80'
-        }`}>
-          {showConfetti && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <PartyPopper className="w-20 h-20 text-yellow-400 animate-bounce" />
+      {/* Camera Modal Popup */}
+      {showCameraModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-gradient-to-br from-green-500 to-blue-600 rounded-lg">
+                  <Camera className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-xl font-playfair font-semibold text-gray-800">QR Code Scanner</h3>
+              </div>
+              <button
+                onClick={handleCloseCamera}
+                className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-600" />
+              </button>
             </div>
-          )}
-          
-          <div className="flex items-center space-x-3">
-            {scanResult.type === 'success' && <CheckCircle className="w-8 h-8 text-green-600" />}
-            {scanResult.type === 'duplicate' && <AlertTriangle className="w-8 h-8 text-yellow-600" />}
-            {scanResult.type === 'invalid' && <XCircle className="w-8 h-8 text-red-600" />}
-            
-            <div>
-              <p className={`text-lg font-playfair font-semibold ${
-                scanResult.type === 'success' ? 'text-green-800' :
-                scanResult.type === 'duplicate' ? 'text-yellow-800' :
-                'text-red-800'
-              }`}>
-                {scanResult.message}
-              </p>
+
+            {/* Camera Feed */}
+            <div className="relative mb-4">
+              <video
+                ref={videoRef}
+                className="w-full max-h-96 rounded-xl border-4 border-pink-200 bg-gray-100"
+                playsInline
+                muted
+                autoPlay
+              />
               
-              {scanResult.type === 'success' && (
-                <p className="text-sm text-green-700 mt-1">
-                  Enjoy the celebration! 💕
-                </p>
-              )}
+              {/* Scanning Overlay */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="w-48 h-48 border-4 border-green-400 rounded-lg animate-pulse">
+                  <div className="absolute -top-1 -left-1 w-8 h-8 border-t-4 border-l-4 border-green-500 rounded-tl-lg"></div>
+                  <div className="absolute -top-1 -right-1 w-8 h-8 border-t-4 border-r-4 border-green-500 rounded-tr-lg"></div>
+                  <div className="absolute -bottom-1 -left-1 w-8 h-8 border-b-4 border-l-4 border-green-500 rounded-bl-lg"></div>
+                  <div className="absolute -bottom-1 -right-1 w-8 h-8 border-b-4 border-r-4 border-green-500 rounded-br-lg"></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Scan Result in Modal */}
+            {scanResult && (
+              <div className={`relative mb-4 p-4 rounded-xl border-2 transition-all duration-300 ${
+                scanResult.type === 'success' ? 'border-green-300 bg-green-50' :
+                scanResult.type === 'duplicate' ? 'border-yellow-300 bg-yellow-50' :
+                'border-red-300 bg-red-50'
+              }`}>
+                {showConfetti && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <PartyPopper className="w-12 h-12 text-yellow-400 animate-bounce" />
+                  </div>
+                )}
+                
+                <div className="flex items-center space-x-3">
+                  {scanResult.type === 'success' && <CheckCircle className="w-6 h-6 text-green-600" />}
+                  {scanResult.type === 'duplicate' && <AlertTriangle className="w-6 h-6 text-yellow-600" />}
+                  {scanResult.type === 'invalid' && <XCircle className="w-6 h-6 text-red-600" />}
+                  
+                  <div>
+                    <p className={`font-playfair font-semibold ${
+                      scanResult.type === 'success' ? 'text-green-800' :
+                      scanResult.type === 'duplicate' ? 'text-yellow-800' :
+                      'text-red-800'
+                    }`}>
+                      {scanResult.message}
+                    </p>
+                    
+                    {scanResult.type === 'success' && (
+                      <p className="text-sm text-green-700 mt-1">
+                        Enjoy the celebration! 💕
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Instructions */}
+            <div className="bg-blue-50 rounded-xl p-3 border border-blue-200">
+              <p className="text-sm text-blue-700 text-center">
+                <strong>Point your camera at a wedding invitation QR code</strong>
+                <br />
+                The scanner will automatically detect and process valid codes
+              </p>
+            </div>
+
+            {/* Close Button */}
+            <div className="mt-4 flex justify-center">
+              <button
+                onClick={handleCloseCamera}
+                className="px-6 py-2 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-lg hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center space-x-2"
+              >
+                <CameraOff className="w-4 h-4" />
+                <span>Close Scanner</span>
+              </button>
             </div>
           </div>
         </div>
@@ -349,10 +416,10 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
         <h3 className="font-playfair font-semibold text-blue-800 mb-2">How to Use:</h3>
         <ul className="text-sm text-blue-700 space-y-1">
           <li>• Allow camera permission when prompted by your browser</li>
-          <li>• Click "Start Scanner" to activate the camera</li>
+          <li>• Click "Open Camera Scanner" to launch the camera popup</li>
           <li>• Point the camera at a wedding invitation QR code</li>
           <li>• The system will automatically check in valid guests</li>
-          <li>• Already checked-in guests will be politely notified</li>
+          <li>• Press Escape or click the close button to exit the scanner</li>
         </ul>
       </div>
     </div>
