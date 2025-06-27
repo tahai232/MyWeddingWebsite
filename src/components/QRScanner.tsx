@@ -22,11 +22,11 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
   const [showConfetti, setShowConfetti] = useState(false);
   const [cameraError, setCameraError] = useState<string>('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [showModal, setShowModal] = useState(false); // ✅ Modal state
 
   useEffect(() => {
+    // Check camera availability on component mount
     checkCameraAvailability();
-
+    a
     return () => {
       if (qrScannerRef.current) {
         qrScannerRef.current.destroy();
@@ -36,22 +36,28 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
 
   const checkCameraAvailability = async () => {
     try {
+      // Check if camera is available
       const hasCamera = await QrScanner.hasCamera();
       if (!hasCamera) {
         setCameraError('No camera found on this device');
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
+      // Request camera permission
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment' // Prefer back camera
+        } 
       });
+      
+      // Stop the stream immediately as we just wanted to check permission
       stream.getTracks().forEach(track => track.stop());
       setHasPermission(true);
       setCameraError('');
     } catch (error) {
       console.error('Camera permission error:', error);
       setHasPermission(false);
-
+      
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
           setCameraError('Camera permission denied. Please allow camera access and refresh the page.');
@@ -71,26 +77,25 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
 
     try {
       setCameraError('');
-
+      
       qrScannerRef.current = new QrScanner(
         videoRef.current,
         (result) => handleScanResult(result.data),
         {
           highlightScanRegion: true,
           highlightCodeOutline: true,
-          preferredCamera: 'environment',
+          preferredCamera: 'environment', // Use back camera if available
           maxScansPerSecond: 5,
         }
       );
 
       await qrScannerRef.current.start();
       setIsScanning(true);
-      setShowModal(true); // ✅ Open modal
-
+      setHasPermission(true);
     } catch (error) {
       console.error('Error starting QR scanner:', error);
       setIsScanning(false);
-
+      
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
           setCameraError('Camera permission denied. Please allow camera access in your browser settings.');
@@ -113,14 +118,14 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
       qrScannerRef.current = null;
     }
     setIsScanning(false);
-    setShowModal(false); // ✅ Close modal
   };
 
   const handleScanResult = (data: string) => {
-    if (data === lastResult) return;
-
+    if (data === lastResult) return; // Prevent duplicate scans
+    
     setLastResult(data);
-
+    
+    // Parse wedding guest QR code format: WEDDING_GUEST:guestId:guestName:timestamp
     if (!data.startsWith('WEDDING_GUEST:')) {
       const attempt: CheckInAttempt = {
         id: `attempt_${Date.now()}`,
@@ -128,7 +133,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
         timestamp: Date.now(),
         status: 'invalid'
       };
-
+      
       onAddCheckInAttempt(attempt);
       setScanResult({
         type: 'invalid',
@@ -147,7 +152,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
         timestamp: Date.now(),
         status: 'invalid'
       };
-
+      
       onAddCheckInAttempt(attempt);
       setScanResult({
         type: 'invalid',
@@ -164,7 +169,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
         status: 'duplicate',
         guestName: guest.guestName
       };
-
+      
       onAddCheckInAttempt(attempt);
       setScanResult({
         type: 'duplicate',
@@ -174,8 +179,9 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
       return;
     }
 
+    // Successful check-in
     onCheckIn(guest.id);
-
+    
     const attempt: CheckInAttempt = {
       id: `attempt_${Date.now()}`,
       qrContent: data,
@@ -183,7 +189,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
       status: 'success',
       guestName: guest.guestName
     };
-
+    
     onAddCheckInAttempt(attempt);
     setScanResult({
       type: 'success',
@@ -191,8 +197,11 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
       guestName: guest.guestName
     });
 
+    // Show confetti animation
     setShowConfetti(true);
     setTimeout(() => setShowConfetti(false), 3000);
+
+    // Clear result after 3 seconds
     setTimeout(() => {
       setScanResult(null);
       setLastResult('');
@@ -214,7 +223,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
             </div>
             <h2 className="text-xl font-playfair font-semibold text-gray-800">Wedding Entrance Scanner</h2>
           </div>
-
+          
           <button
             onClick={isScanning ? stopScanning : startScanning}
             disabled={hasPermission === false}
@@ -240,6 +249,7 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
           </button>
         </div>
 
+        {/* Camera Error Message */}
         {cameraError && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-center space-x-2">
@@ -259,9 +269,45 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
             </div>
           </div>
         )}
+
+        {/* Video Scanner */}
+        <div className="relative">
+          <video
+            ref={videoRef}
+            className="w-full max-w-md mx-auto rounded-xl border-4 border-pink-200 bg-gray-100"
+            style={{ display: isScanning ? 'block' : 'none' }}
+            playsInline
+            muted
+          />
+          
+          {!isScanning && (
+            <div className="w-full max-w-md mx-auto h-64 bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl border-4 border-gray-300 flex items-center justify-center">
+              <div className="text-center">
+                {hasPermission === null ? (
+                  <>
+                    <div className="w-8 h-8 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                    <p className="text-gray-600 font-medium">Checking camera...</p>
+                  </>
+                ) : hasPermission === false ? (
+                  <>
+                    <Shield className="w-12 h-12 text-red-400 mx-auto mb-3" />
+                    <p className="text-red-600 font-medium">Camera Permission Required</p>
+                    <p className="text-sm text-red-500 mt-1">Please allow camera access to scan QR codes</p>
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-gray-600 font-medium">Click "Start Scanner" to begin</p>
+                    <p className="text-sm text-gray-500 mt-1">Point camera at wedding invitation QR codes</p>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Result */}
+      {/* Scan Result */}
       {scanResult && (
         <div className={`relative bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border-2 transition-all duration-300 ${
           scanResult.type === 'success' ? 'border-green-300 bg-green-50/80' :
@@ -273,10 +319,12 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
               <PartyPopper className="w-20 h-20 text-yellow-400 animate-bounce" />
             </div>
           )}
+          
           <div className="flex items-center space-x-3">
             {scanResult.type === 'success' && <CheckCircle className="w-8 h-8 text-green-600" />}
             {scanResult.type === 'duplicate' && <AlertTriangle className="w-8 h-8 text-yellow-600" />}
             {scanResult.type === 'invalid' && <XCircle className="w-8 h-8 text-red-600" />}
+            
             <div>
               <p className={`text-lg font-playfair font-semibold ${
                 scanResult.type === 'success' ? 'text-green-800' :
@@ -285,8 +333,11 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
               }`}>
                 {scanResult.message}
               </p>
+              
               {scanResult.type === 'success' && (
-                <p className="text-sm text-green-700 mt-1">Enjoy the celebration! 💕</p>
+                <p className="text-sm text-green-700 mt-1">
+                  Enjoy the celebration! 💕
+                </p>
               )}
             </div>
           </div>
@@ -298,33 +349,12 @@ const QRScanner: React.FC<Props> = ({ guests, onCheckIn, onAddCheckInAttempt }) 
         <h3 className="font-playfair font-semibold text-blue-800 mb-2">How to Use:</h3>
         <ul className="text-sm text-blue-700 space-y-1">
           <li>• Allow camera permission when prompted by your browser</li>
-          <li>• Click "Start Scanner" to open camera in a window</li>
+          <li>• Click "Start Scanner" to activate the camera</li>
           <li>• Point the camera at a wedding invitation QR code</li>
           <li>• The system will automatically check in valid guests</li>
+          <li>• Already checked-in guests will be politely notified</li>
         </ul>
       </div>
-
-      {/* ✅ Scanner Modal with Video Feed */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg relative">
-            <h2 className="text-lg font-bold mb-4">Scan QR Code</h2>
-            <video
-              ref={videoRef}
-              className="w-full rounded-lg border-4 border-pink-300 bg-black"
-              playsInline
-              muted
-              autoPlay
-            />
-            <button
-              onClick={stopScanning}
-              className="absolute top-3 right-3 text-gray-600 hover:text-red-600 text-xl font-bold"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
